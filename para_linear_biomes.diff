@@ -1,0 +1,798 @@
+4c4,11
+< #include <gcrypt.h>
+---
+> 
+> #include <unistd.h>
+> #include <getopt.h>
+> #include <pthread.h>
+> const uint64_t STRUCT_MASK = 0xffff;  // when to check on neighbouring threads
+> const uint32_t BIOME_MASK = 0x3f;
+> const int MINECRAFT_VERSION = MC_1_16;
+> 
+6,7c13
+< #define VERSION 37 //id for the validation
+< #define FILTER_TYPE 1// 0=> RSG overworld (Practice Seeds); 1=> village only; 2=> shipwreck only; 3 => jungle only; 4 => coinflip (classic); 5=> whatever I want; 6 => loot testing
+---
+> #define VERSION 0xff //id for the validation
+63,80d68
+< void verification_token(uint64_t timestamp, unsigned int vrs, int high_int, int lower_int, int64_t seed, uint64_t IV, uint64_t timestamp2){
+<   printf("Verification Token:\n");
+<   print64(IV);
+<   printf("-");
+<   print32(high_int);
+<   printf("-");
+<   print32(lower_int);
+<   printf("-");
+<   print64(timestamp);
+<   printf("-");
+<   print32(vrs);
+<   printf("-");
+<   print64(seed);
+<   printf("-%ld",timestamp2-timestamp);
+<   printf("\n");
+<   return;
+< }
+< 
+867,905c855,856
+< int main () {
+<     uint64_t timestamp = (uint64_t) time(NULL);
+<     FILE *fp = fopen("csprng.c","rb"); //Uses SHA256 of this source code for key
+<     char source[MAXBUFLEN + 1];
+<     if (fp != NULL) {
+<         size_t newLen = fread(source, sizeof(char), MAXBUFLEN, fp);
+<         if ( ferror( fp ) != 0 ) {
+<             fputs("Error reading file", stderr);
+<         } else {
+<             source[newLen++] = '\0';
+<         }
+<         fclose(fp);
+<     }
+<     unsigned char *salsaKey;
+<     unsigned char *salsaKey2;   
+<     unsigned i;
+<     unsigned int l = gcry_md_get_algo_dlen(GCRY_MD_SHA256); /* get digest length (used later to print the result) */
+< 
+<     gcry_md_hd_t h;
+<     gcry_md_open(&h, GCRY_MD_SHA256, GCRY_MD_FLAG_SECURE); /* initialise the hash context */
+<     gcry_md_write(h, source, strlen(source)); /* hash some text */
+<     salsaKey = gcry_md_read(h, GCRY_MD_SHA256); /* get the result */
+< 
+<     unsigned char stampString[8];
+<     int64ToChar(stampString, timestamp);
+< 
+<     unsigned char longInput[41];
+<     for (i=0; i < 32; i++){
+<       longInput[i] = salsaKey[i];
+<     }
+<     for (i=0; i < 8; i++){
+<       longInput[32+i] = stampString[i];
+<     }
+<     if (DEBUG){
+<       printf("DEBUG: longInput:");
+<       for (i = 0; i < 40; i++){
+<         printf("%02x", longInput[i]); /* print the result */
+<       }
+<     }
+---
+> // use this structure to pass around parameters
+> struct thread_param_t {
+907,964c858,896
+<     gcry_md_hd_t h2;
+<     gcry_md_open(&h2, GCRY_MD_SHA256, GCRY_MD_FLAG_SECURE); /* initialise the hash context */
+<     gcry_md_write(h2, longInput, 40); /* hash some text */
+<     salsaKey2 = gcry_md_read(h2, GCRY_MD_SHA256); /* get the result */
+< 
+<     gcry_error_t     gcryError;
+<     gcry_cipher_hd_t gcryCipherHd;
+<     size_t           index;
+< 
+<     unsigned char iniVector[8];
+<     uint64_t NONCE = rand64();
+<     int seedcounter = 0;
+<     int64ToChar(iniVector, NONCE);
+<     int biome_tolerance = 4000;
+<     char descriptions[5][65] = {"(RSG overworld)", "(Village Only)", "(Shipwreck Only)", "(Jungle Only)", ""};
+<     printf("FSG v1.2.4 %s\n", descriptions[FILTER_TYPE]);
+< 
+<     int filterStyle = FILTER_TYPE;
+<     if (filterStyle == 4){ //Random village or shipwreck (classic)
+<       if (NONCE % 2 == 0){
+<         printf("Village Seed\n");
+<         filterStyle = 1;
+<       } else {
+<         printf("Shipwreck Seed\n");
+<         filterStyle = 2;
+<       }
+<     }
+<     if (filterStyle == 2){
+<       biome_tolerance = 3000;
+<     }
+<     if (filterStyle == 3){ //jungles
+<       biome_tolerance = 2000;
+<     }
+<     //biome_tolerance is tricky, some lower48s will never be satisfiable so we need a steam valve, but too impatient and 
+<     //the heavily biome dependent filters will need to be extra lucky
+<     //determine these through experimentation
+< 
+<     gcryError = gcry_cipher_open(
+<         &gcryCipherHd, // gcry_cipher_hd_t *
+<         GCRY_CIPHER_SALSA20,   // int
+<         GCRY_CIPHER_MODE_STREAM,   // int
+<         0);            // unsigned int
+<     if (gcryError)
+<     {
+<         printf("gcry_cipher_open failed:  %s/%s\n",
+<                gcry_strsource(gcryError),
+<                gcry_strerror(gcryError));
+<         return 1;
+<     }
+<     
+<     gcryError = gcry_cipher_setkey(gcryCipherHd, salsaKey2, 32);
+<     if (gcryError)
+<     {
+<         printf("gcry_cipher_setkey failed:  %s/%s\n",
+<                gcry_strsource(gcryError),
+<                gcry_strerror(gcryError));
+<         return 1;
+<     }
+---
+> 	int filterStyle;	// the style of filter to use
+>   	LayerStack *g;		// save ourselves from re-initing this each biome check
+> 	bool verbose;		// be chatty about what we're doing
+> 	uint32_t biome_reset;	// when should we switch to searching another biome?
+> 
+> 	uint64_t start;		// the nonce or starting location
+> 	uint32_t step;		// how many threads there are in total
+> 	uint32_t index;		// this thread's ID
+> 
+> 	uint64_t* structs;	// a pointer to thread storage for structure seeds
+> 	uint32_t* biomes;	// thread storage for the biome portion
+>   	int* fortressQuadrant;  // need this to persist some state from structure to biome
+> 
+> 	uint64_t* s_checked;	// per-thread status updates for structure seeds checked
+> 	uint32_t* b_checked;	//   and biome seeds checked
+> 
+>   };
+> 
+> // biome checking
+> uint32_t find_biome_seed( uint64_t seed, struct thread_param_t* params ) {
+> 
+>   // de-void the parameters and make them local
+>   struct thread_param_t p = *params;
+>   
+>   // figure out the structure seed we're checking
+>   int fortressQuadrant = p.fortressQuadrant[p.index];
+> 
+>   // set up any additional params
+>   uint32_t checked = p.b_checked[p.index];
+>   if( p.verbose )
+>     printf( "\nDEBUG: thread %u checking the biomes of seed %lu.\n", p.index, seed );
+> 
+>   // for each biome seed
+>   for( uint64_t biome = 0; biome < p.biome_reset; biome++ ) {
+> 
+>     // check if we need to synchronize
+>     if( (checked & BIOME_MASK) == BIOME_MASK ) {
+> 
+>       p.b_checked[p.index] = checked;
+966,969c898,930
+<     if (DEBUG){
+<       printf("DEBUG: salsaKey2:");
+<       for (i = 0; i < 32; i++){
+<         printf("%02x", salsaKey2[i]); /* print the result */
+---
+>       // for each thread
+>       for( uint32_t i = 0; i < p.step; i++ ) {
+> 
+>         // other than ourselves
+>         if( i == p.index )
+>           continue;
+> 
+>         // check if another thread found a biome
+>         if( p.biomes[i] <= 0xffff )
+> 	
+> 	  if ( (p.structs[i] < p.structs[p.index]) || ((p.structs[i] == p.structs[p.index]) && (p.biomes[i] < biome)) ) {
+> 
+>             if( p.verbose )
+>        	      printf( "\nDEBUG: thread %u is quitting, thread %u found a biome.\n", p.index, i );
+> 
+>             return 0x10000;
+> 	    }
+> 
+>         } // for (each thread)
+>       } // if (time to sync)
+> 
+>     // otherwise, check the current biome
+>     int result = valid_biomes(seed + (biome << 48), &fortressQuadrant, p.filterStyle, p.g);
+>     checked++;
+> 
+>     // success? Terminate!
+>     if( result > 0 ) {
+> 
+>       if( p.verbose )
+>         printf( "\nDEBUG: thread %u is quitting, found a biome at %u.\n", p.index, biome );
+>       p.biomes[p.index] = biome;
+>       p.b_checked[p.index] = checked;
+>       return biome;
+971d931
+<     }
+973,984c933,1005
+<     gcryError = gcry_cipher_setiv(gcryCipherHd, iniVector, 8);
+<     if (gcryError)
+<     {
+<         printf("gcry_cipher_setiv failed:  %s/%s\n",
+<                gcry_strsource(gcryError),
+<                gcry_strerror(gcryError));
+<         return 1;
+<     }
+<     if(DEBUG){
+<       printf("DEBUG: iniVector:");
+<       for (i = 0; i < 8; i++){
+<         printf("%02x", iniVector[i]); /* print the result */
+---
+>     } // for (each biome seed)
+> 
+>   // otherwise, exit in shame
+>   p.biomes[p.index] = 0xffffffff;
+>   p.b_checked[p.index] = checked;
+>   return 0xffffffff;
+>   }
+> 
+> void* find_seed( void* params ) {
+> 
+>   // de-void the parameters and make them local
+>   struct thread_param_t p = *(struct thread_param_t*) params;
+> 	
+>   // create the rest of the parameters we'll need
+>   int fortressQuadrant = 0;
+>   uint64_t checked = p.s_checked[p.index];
+> 
+>   if( p.verbose )
+>     printf( "\nDEBUG: thread %u starting at %lu.\n", p.index, p.start );
+> 
+>   // for each structure seed
+>   for( uint64_t s_idx = checked; s_idx <= 0xffffffffffffL; s_idx++ ) {
+> 
+>     // check if we need to synchronize
+>     if( (checked & STRUCT_MASK) == STRUCT_MASK ) {
+> 
+>       // update our stats
+>       p.s_checked[p.index] = checked;
+> 
+>       // for each thread
+>       for( uint32_t i = 0; i < p.step; i++ ) {
+> 
+>         // except ourselves
+>         if( i == p.index )
+>           continue;
+> 
+>         // check if they've terminated with a better seed
+>         if( (p.biomes[i] <= 0xffff) && (p.structs[i] < s_idx) ) {
+> 
+>           if( p.verbose )
+>             printf( "\nDEBUG: thread %u quitting, because thread %u found a seed.\n", p.index, i );
+> 
+>           pthread_exit(NULL);		// time to give up, then
+> 	  }
+> 
+>         } // for (each thread)
+>       } // if (time to check)
+> 
+>     // otherwise, we check the current seed
+>     uint64_t seed = p.start + s_idx;
+> 
+>     int result = valid_structures_and_types( seed & 0xffffffffffffL, &fortressQuadrant, 
+>         p.filterStyle );
+> 
+>     checked++;
+> 
+>     // no valid structures? Bad bastion biome? Try a different structure seed
+>     if ((result <= 0) || (bastionbiome(seed) <= 0))
+>         continue;
+> 
+>     // success! Ask for a biome seed
+>     if( p.verbose )
+>       printf( "\nDEBUG: thread %u found a seed at offset %lu.\n", p.index, s_idx );
+> 
+>     p.s_checked[p.index] = checked;
+>     p.fortressQuadrant[p.index] = fortressQuadrant;
+>     uint32_t retVal = find_biome_seed( seed, &p );
+> 
+>     // did we find a legit biome?
+>     if( retVal <= 0xffff ) {
+> 
+>       p.structs[p.index] = s_idx;
+>       p.biomes[p.index] = retVal;
+986,1018c1007,1148
+<     }
+<     
+<     size_t txtLength = 8;
+<     uint64_t seed = 0;
+<     unsigned char * encBuffer = malloc(txtLength+1);
+<     unsigned char * textBuffer = malloc(txtLength+1);
+<     memset(textBuffer, 0, 9);
+<     int ii, ss;
+< 
+<     int has_lower = 0;
+<     uint64_t lower48 = 0;
+<     uint64_t upper16 = 0;
+<     int is_done = 0;
+<     int biome_counter = 0;
+<     initBiomes();
+<     LayerStack g;
+<     int mc = MC_1_16;
+<     setupGenerator(&g, mc);
+<     int ohcrap = 0;
+<     int fortressQuadrant = 0;
+< 
+<     for(ii=0; is_done < 1; ii++){
+<       gcryError = gcry_cipher_encrypt(
+<           gcryCipherHd, // gcry_cipher_hd_t
+<           encBuffer,    // void *
+<           txtLength,    // size_t
+<           textBuffer,    // const void *
+<           txtLength);   // size_t
+<       if (gcryError)
+<       {
+<           printf("gcry_cipher_decrypt failed:  %s/%s\n",
+<                 gcry_strsource(gcryError),
+<                 gcry_strerror(gcryError));
+---
+> 
+>     // were we told to exit?
+>     if( retVal <= 0x10000 )
+>       pthread_exit(NULL);
+> 
+>     // otherwise, carry on
+> 
+>     } // for( each seed )
+> 
+>   } // find_seed
+> 
+> void check_seed( uint64_t seed, int filterStyle, LayerStack* g ) {
+> 
+>   // we need some init-ing
+>   int fortressQuadrant = 0;
+> 
+>   // then just carry out the tests
+>   int result = valid_structures_and_types( seed & 0xffffffffffffL, &fortressQuadrant, 
+>     filterStyle );
+>   printf( "%ld\tvalid_structures_and_types: %d", seed, result );
+> 
+>   result = bastionbiome( seed );
+>   printf( "\tbastionbiome: %d", result );
+> 
+>   result = valid_biomes(seed, &fortressQuadrant, filterStyle, g);
+>   printf( "\tvalid_biomes: %d\n", result );
+> 
+>   fflush(stdout);
+>   }
+> 
+> // use this outside the inner loop for book-keeping
+> struct token_t {
+>         
+> 	uint8_t version;	// what version of the filters are in use
+> 	uint8_t filterStyle;	// the specific filter being used
+> 	uint64_t nonce;		// the nonce used as a starting point
+> 	uint64_t seed;		// the seed that was discovered
+> 	uint64_t structs;	// the number of structure seeds examined to get there
+> 	uint64_t biomes;	// the number of biome variants examined to get there
+> 	uint64_t timestamp;	// the time the search started
+>   };
+> 
+> void print_verification_token( struct token_t* token ) {
+> 
+>   if( token == NULL )
+>     return;
+> 
+>   printf("Verification Token:\n");
+>   printf("%02X%02X-%016lx-%016lX-%lx-%x-%lX\n", token->version, token->filterStyle, token->nonce, 
+>     token->seed, token->structs + token->biomes, token->biomes, token->timestamp);
+> 
+>   }
+> 
+> // NOTE: don't forget to free() the return!
+> struct token_t* parse_verification_token( unsigned char* str ) {
+> 
+>   struct token_t* token = malloc( sizeof(struct token_t) );
+> 
+>   int retVal = sscanf( str, "%02X%02X-%016lx-%016lX-%lx-%x-%lX", &(token->version), &(token->filterStyle),
+>     &(token->nonce), &(token->seed), &(token->structs), &(token->biomes), &(token->timestamp) );
+> 
+>   if( retVal != 7 ) {
+> 
+>     free( token );
+>     return NULL;
+>     }
+> 
+>   token->structs -= token->biomes;	// adjust the structure seed count
+>   return token;
+>   }
+> 
+> int main (int argc, char** argv) {
+> 
+>   // read the command line params
+>   uint32_t threads	= 0;
+>   int filterStyle	= 1;
+>   bool verbose		= false;
+>   struct token_t* verify= NULL;
+> 
+>   initBiomes();		// in case we're asked to check
+>   LayerStack g;
+>   setupGenerator(&g, MINECRAFT_VERSION);
+> 
+>   char descriptions[5][65] = {"RSG overworld", "Village Only", "Shipwreck Only", 
+> 	  "Jungle Only", ""};
+>   uint32_t biome_cutoffs[5] = {1269, 15520, 2744, 5456, 0};
+> 
+>   static struct option cmdline_options[] = {
+>     {"check",   required_argument, 0, 'c' },
+>     {"filter",  required_argument, 0, 'f' },
+>     {"threads", required_argument, 0, 't' },
+>     {"verbose", no_argument,       0, 'v' },
+>     {"help",    no_argument,       0, 'h' },
+>     {"Verify",  required_argument, 0, 'V' },
+>     {0,         0,                 0,  0 }
+>     };
+> 
+>   while( true ) {
+> 
+>     int optidx = -1;
+>     int c      = getopt_long(argc, argv, "c:f:t:V:vh", cmdline_options, &optidx);
+>     if (c == -1)
+>       break;
+> 
+>     switch( c ) {
+> 
+>       case 'h':		// print out help
+> 	printf("FSG Seed Filter v%d\n", VERSION);
+> 	printf("\n");
+> 	printf(" USAGE: %s [--help] [--verbose] [--threads THREADS] [--filter FILTER]\n", argv[0]);
+> 	printf("          [--check SEED]\n");
+> 	printf("\n");
+> 	printf(" --help:    Print this message.\n");
+> 	printf(" --verbose: Print out additional information while running.\n");
+> 	printf(" --threads: Set the number of threads to use. Defaults to 0, or use all\n");
+> 	printf("             available.\n");
+> 	printf(" --check:   Print the weights each interior filter applies to SEED, a\n");
+> 	printf("             Minecraft seed.\n");
+> 	printf(" --filter:  Use the given filter when evaluating seeds. Choices are:\n");
+>         for( uint i = 0; i < 4; i++ )
+>           printf("             %3d: %s\n", i, descriptions[i] );
+> 	printf("\n");
+> 	printf(" Each long option has a short version consisting of their first letter.\n");
+> 	printf("   For instance, \"-v\" is identical to \"--verbose\".\n");
+> 	printf("\n");
+> 	return 0;
+> 
+>       case 'c':		// check a seed
+> 	printf("FSG Seed Filter v%d\n", VERSION);
+> 	printf("\n");
+>         check_seed( strtol(optarg, NULL, 0), filterStyle, &g );
+>         return 0;
+> 
+>       case 'f':		// choice of filter
+> 
+>         filterStyle = strtol( optarg, NULL, 0 );
+>         if( (filterStyle < 0) || (filterStyle > 3) ) {
+> 
+>           printf( "ERROR: Invalid filter type! Only the following are accepted:\n" );
+>           for( uint i = 0; i < 4; i++ )
+>             printf( "\t%d = %s\n", i, descriptions[i] );
+> 
+1019a1150,1227
+>           }
+> 
+>         break;
+> 
+>       case 't':		// number of threads
+> 
+>         threads = strtol( optarg, NULL, 0 );
+>         break;		// defer on error checking until later
+> 
+>       case 'v':		// be verbose
+>         verbose = true;
+> 	break;
+>      
+>       case 'V':		// verify mode
+>         verify = parse_verification_token( optarg );
+>         if( verify != NULL ) {
+> 
+> 	  // do some preliminary checking
+> 	  if( verify->version != VERSION ) {
+> 
+> 	    printf( "ERROR: The FSG version used to generate this token, %d, cannot be checked with this program (which is version %d).\n",
+> 		 verify->version, VERSION );
+> 	    return 1;
+> 	    }
+> 	  filterStyle	= verify->filterStyle;
+> 	  }
+> 
+> 	break;
+> 
+>       } // switch
+>     } // while( command line options )
+> 
+>   uint32_t num_procs = sysconf(_SC_NPROCESSORS_ONLN);
+>   if( (threads == 0) || (threads > num_procs) )
+>     threads = num_procs;
+>   if( verify != NULL )
+>     threads = 1;		// verification is single-threaded
+> 
+>   // annouce ourselves
+>   printf( "FSG v%d %s, %d threads\n", VERSION, descriptions[filterStyle], threads );
+> 
+>   // do additional setup
+>   uint64_t nonce = rand64();
+>   if( verify != NULL )
+>     nonce = verify->nonce;
+> 
+>   struct timespec now;		// need wall clock time for the token
+>   clock_gettime( CLOCK_REALTIME, &now );
+>   uint64_t now_ticks = (uint64_t)(now.tv_sec*1e6 + now.tv_nsec*1e-3);
+>   // "now" is free to be recycled after this point
+> 
+>   struct timespec start;	// need a more accurate time for the stats
+>   clock_gettime( CLOCK_MONOTONIC, &start );
+> 
+>   // create a parameter football for each thread, then launch
+>   pthread_t thread_id[threads];
+>   struct thread_param_t params[threads];
+>   LayerStack* g_pool = malloc( sizeof(LayerStack) * threads );
+>   uint64_t nonce_step = 0xffffffffffffL / threads;		// close enough
+> 
+>   for( uint32_t i = 0; i < threads; i++ ) {
+> 
+>     params[i].verbose     = verbose;
+>     params[i].filterStyle = filterStyle;
+>     params[i].g           = g_pool + i;
+>     params[i].biome_reset = biome_cutoffs[filterStyle];
+> 
+>     params[i].start       = nonce + i*nonce_step;
+>     params[i].step        = threads;
+>     params[i].index       = i;
+>   
+>     if( i == 0 ) {
+> 
+>       params[i].fortressQuadrant = malloc( sizeof(int) * threads );
+>       params[i].structs   = malloc( sizeof(uint64_t) * threads );
+>       params[i].s_checked = malloc( sizeof(uint64_t) * threads );
+>       params[i].biomes    = malloc( sizeof(uint32_t) * threads );
+>       params[i].b_checked = malloc( sizeof(uint32_t) * threads );
+1021,1035c1229,1291
+<       seedcounter++;
+<       seed = charTo64bitNum(encBuffer);
+<       int result = 0;
+<       if (has_lower < 1){
+<         lower48 = seed >> 16;
+<         //lower48 = -7385161545945413464LL & 0xFFFFFFFFFFFF;
+<         result = valid_structures_and_types(lower48, &fortressQuadrant, filterStyle);
+<         if (result > 0){ // && bastionbiome(lower48) == 1){
+<           //bastion biomes are minorly affected by top 16 but are medium cost:
+<           has_lower = seedcounter;
+<           ohcrap = 0;
+<         } else {
+<           if ((seedcounter - biome_counter) % 1000000 == 0){
+<             printf(",");
+<             fflush(stdout);
+---
+>     else {
+> 
+>       params[i].fortressQuadrant = params[0].fortressQuadrant;
+>       params[i].structs   = params[0].structs;
+>       params[i].s_checked = params[0].s_checked;
+>       params[i].biomes    = params[0].biomes;
+>       params[i].b_checked = params[0].b_checked;
+>       }
+> 	
+>     setupGenerator(params[i].g, MINECRAFT_VERSION);
+>     params[0].fortressQuadrant[i]   = 0;
+>     params[0].structs[i]   = 0xffffffffffffffffL;
+>     params[0].s_checked[i] = 0;
+>     params[0].biomes[i]    = 0xffffffff;
+>     params[0].b_checked[i] = 0;
+> 
+>     int results = pthread_create( thread_id + i, NULL, find_seed, params + i );
+>     if( results != 0 ) {
+> 
+>        printf( "ERROR! Could not create a thread, was given error code %d.\n",
+> 	results );
+>        return 2;
+>        }
+> 
+>     } // for (each thread)
+> 
+>   // enter the status loop
+>   struct timespec delay = {0, 1e3}; // sleep for 1ms
+> 
+>   uint64_t las_structures = 0;
+>   uint32_t las_biomes = 0;
+>   struct timespec last;		// used for status updates
+>   clock_gettime( CLOCK_MONOTONIC, &last );
+> 
+>   uint32_t best_seed = threads;
+> 
+>   while( true ) {
+> 
+>     nanosleep( &delay, NULL );  // ignore interruptions and errors
+> 
+>     uint64_t tot_structures = 0;
+>     uint32_t tot_biomes = 0;
+> 
+>     // check if anyone's quit
+>     for( uint32_t i = 0; i < threads; i++ )
+>       if( params[0].biomes[i] <= 0xffff )
+>         best_seed = i;			// (not necessarily the best here!)
+>     
+>     if( best_seed < threads ) {
+> 
+>       // force all threads to quit
+>       for( uint32_t i = 0; i < threads; i++ )
+>         pthread_join( thread_id[i], NULL );
+> 
+>       // now find the ACTUAL best
+>       for( uint32_t i = 0; i < threads; i++ )
+>         if( (params[0].biomes[i] <= 0xffff) && (i != best_seed) ) {
+> 
+>           if( params[0].structs[i] < params[0].structs[best_seed] )
+> 	    best_seed = i;
+>           else if( (params[0].structs[i] == params[0].structs[best_seed]) && 
+> 	        (params[0].biomes[i] < params[0].biomes[best_seed]) )
+>             best_seed = i;
+1037,1038c1293,1301
+<           //Could analyze the statistical cost of each filter here as they each give a different negative number
+<           has_lower = 0;
+---
+> 
+>       // tally up stats and print the token
+>       uint64_t seed = params[best_seed].start + params[0].structs[best_seed] + 
+>           ((uint64_t)params[0].biomes[best_seed] << 48);
+> 
+>       for( uint32_t i = 0; i < threads; i++ ) {
+> 
+>         tot_structures += params[0].s_checked[i];
+>         tot_biomes     += params[0].b_checked[i];
+1040,1048c1303,1321
+<       } else {
+<         upper16 = seed >> 48;
+<         //upper16 = -7385161545945413464LL >> 48;
+<         seed = lower48 | (upper16 << 48);
+< //        seed = 7086636929918596711LL;
+<         biome_counter += 1;
+<         if (biome_counter % 100 == 0){
+<           printf(".");
+<           fflush(stdout);          
+---
+> 
+>       // if we're in verification mode, verify the correct seed was found
+>       if( verify != NULL ) {
+> 
+> 	  if( seed == verify->seed )
+>   	    printf("\nGOOD: The terminating seed is what we expected.\n");
+> 	  else
+>   	    printf("\nBAD: The terminating seed was NOT the same!\n");
+> 
+> 	  if( params[0].structs[best_seed] == verify->structs )
+>   	    printf("GOOD: The number of structure seeds checked matches.\n");
+> 	  else
+>   	    printf("BAD: The number of structure seeds checked does NOT match.\n");
+> 
+> 	  if( params[0].biomes[best_seed] == verify->biomes )
+>   	    printf("GOOD: The number of biome seeds checked matches.\n");
+> 	  else
+>   	    printf("BAD: The number of biome seeds checked does NOT match.\n");
+> 
+1050,1069c1323,1341
+<         if (bastionbiome(seed) == 0){
+<           has_lower = 0;
+<         } else {
+<           result = valid_biomes(seed, &fortressQuadrant, filterStyle, &g);
+<           if (result > 0){
+<             printf("\nSeed: %ld\n", seed);
+<             printf("Filtered %d seeds did %d biome checks\n", seedcounter, biome_counter);
+<             uint64_t timestamp2 = (uint64_t) time(NULL);
+<             verification_token(timestamp, VERSION, seedcounter, has_lower, seed, NONCE, timestamp2);
+<             is_done = 1;
+<           } else { //could analyze relative cost of each filter
+<             ohcrap += 1;
+<             is_done = 0;
+<             if (ohcrap >= biome_tolerance){
+<               has_lower = 0;
+<               ohcrap = 0;
+<               printf("@");
+<               fflush(stdout);
+<             }
+<           }
+---
+>       else {
+> 
+>         printf("\nSeed: %ld\n", seed);
+>         printf("Filtered %lu seeds did %u biome checks\n", tot_structures+tot_biomes, 
+>           tot_biomes );
+> 
+>         clock_gettime( CLOCK_MONOTONIC, &last );
+> 
+> 	// recycle this variable
+> 	verify = malloc( sizeof(struct token_t) );
+> 	verify->version 	= VERSION;
+> 	verify->filterStyle 	= filterStyle;
+> 	verify->nonce 		= params[best_seed].start;
+> 	verify->seed 		= seed;
+> 	verify->structs		= params[0].structs[best_seed];
+> 	verify->biomes		= params[0].biomes[best_seed];
+> 	verify->timestamp	= now_ticks;
+> 
+>         print_verification_token( verify );
+1070a1343,1356
+> 
+>       uint64_t delta = (last.tv_sec*1e9 + last.tv_nsec) - (start.tv_sec*1e9 + start.tv_nsec);
+>       printf("Time to complete in nanoseconds: %lu\n", delta );
+>       fflush(stdout);
+> 
+>       free( g_pool );
+>       free( params[0].fortressQuadrant );
+>       free( params[0].structs );
+>       free( params[0].s_checked );
+>       free( params[0].biomes );
+>       free( params[0].b_checked );
+>       free( verify );
+>     
+>       return 0;
+1072,1074c1358,1410
+<     }
+<     return 0;
+< }
+---
+> 
+>     // otherwise, check if it's time for a status display
+>     clock_gettime( CLOCK_MONOTONIC, &now );
+>     if( now.tv_sec != last.tv_sec ) {
+> 
+>       // tally up stats and try to find the best structure seed
+>       best_seed = threads;
+>       for( uint32_t i = 0; i < threads; i++ ) {
+> 
+>         tot_structures += params[0].s_checked[i];
+>         tot_biomes     += params[0].b_checked[i];
+> 
+>         if( params[0].structs[i] <= 0xffffffffffffL ) {
+> 
+> 	  if( (best_seed == threads) || (params[0].structs[i] < params[0].structs[best_seed]) )
+>             best_seed = i;
+> 	  }
+> 
+>         }
+> 
+>       printf( "\rSTATUS: %lu structs, %u biomes, ", tot_structures, tot_biomes );
+> 
+>       uint64_t delta = (now.tv_sec*1e9 + now.tv_nsec) - (last.tv_sec*1e9 + last.tv_nsec);
+>       float per_sec  = (float) ((tot_structures - las_structures) + 
+>           (tot_biomes - las_biomes)) * 1e9 / (float) delta;
+>       if( per_sec < 1000 )
+>         printf( "%.1f checks/s", per_sec );
+>       else if( per_sec < 1e6 )
+>     	  printf( "%.1fk checks/s", per_sec * 1e-3 );
+>       else if( per_sec < 1e9 )
+>     	  printf( "%.1fM checks/s", per_sec * 1e-6 );
+>       else 
+>     	  printf( "%.1fG checks/s", per_sec * 1e-9 );
+> 
+>       if( best_seed < threads )
+>     	  printf( ", testing %ld", (params[best_seed].start + params[0].structs[best_seed]) & 0xffffffffffffL );
+>       else
+>     	  printf( "          %20s", "" );
+> 
+>       printf( "   " );	// print out some spaces to overwrite any unusually long values
+>       fflush(stdout);   //  but not too many, otherwise it may wrap
+> 
+>       las_structures = tot_structures;
+>       las_biomes = tot_biomes;
+>       last = now;
+> 
+>       } // if( status display )
+> 
+>     } // while( infinity )
+> 
+>   return -1;	// we should never reach this
+> 
+>   } // main
