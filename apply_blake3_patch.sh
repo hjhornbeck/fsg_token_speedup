@@ -52,8 +52,12 @@ fi
 if [ -s libs/libblake3.so ] && [ -s include/blake3.h ] && [ -f .PATCHED ] ; then 
 
 	echo Compiling the patched code...
-	gcc csprng.c -I./include -L./libs -O3 -mtune=native -lblake3 -L. \
+	if gcc csprng.c -I./include -L./libs -O3 -mtune=native -lblake3 -L. \
 		-lcubiomes -lm -pthread -Wl,-rpath=./libs/ -lminecraft_nether_gen_rs \
-		-o seed
+		-o seed ; then
 
+		echo "The code compiled successfully! Please edit csprng.c to use the"
+	        echo " appropriate version number, and re-run this script."
+
+	fi	# compilation should be noisy enough to signify something went wrong
 fi
