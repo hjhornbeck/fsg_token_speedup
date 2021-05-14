@@ -338,7 +338,7 @@
 >     return;
 > 
 >   printf("Verification Token:\n");
->   printf("%02X%02X-%016lx-%016lX-%lx-%lx-%lX\n", (int)token->version, (int)token->filterStyle, token->nonce, 
+>   printf("%02hhX%02hhX-%016lx-%016lX-%lx-%lx-%lX\n", token->version, token->filterStyle, token->nonce, 
 >     token->seed, token->structs + token->biomes, token->biomes, token->timestamp);
 > 
 >   }
@@ -348,7 +348,7 @@
 > 
 >   struct token_t* token = malloc( sizeof(struct token_t) );
 > 
->   int retVal = sscanf( str, "%02X%02X-%016lx-%016lX-%lx-%x-%lX", &(token->version), &(token->filterStyle),
+>   int retVal = sscanf( str, "%02hhX%02hhX-%016lx-%016lX-%lx-%lx-%lX", &(token->version), &(token->filterStyle),
 >     &(token->nonce), &(token->seed), &(token->structs), &(token->biomes), &(token->timestamp) );
 > 
 >   if( retVal != 7 ) {
