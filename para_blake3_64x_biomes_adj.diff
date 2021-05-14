@@ -211,7 +211,7 @@
 >     if( result > 0 ) {
 > 
 >       if( p.verbose )
->         printf( "\nDEBUG: thread %u is quitting, found a biome at %u.\n", p.index, biome );
+>         printf( "\nDEBUG: thread %u is quitting, found a biome at %lu.\n", p.index, biome );
 >       p.biomes[p.index] = biome;
 >       p.b_checked[p.index] = checked;
 >       return biome;
