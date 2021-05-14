@@ -11,12 +11,11 @@
 > #include <blake3.h>
 > #define HASH_BLOCKS 64
 > 
-6,7c15
-< #define VERSION 37 //id for the validation
-< #define FILTER_TYPE 1// 0=> RSG overworld (Practice Seeds); 1=> village only; 2=> shipwreck only; 3 => jungle only; 4 => coinflip (classic); 5=> whatever I want; 6 => loot testing
+6c15
+< #define VERSION 37
 ---
 > #define VERSION 0xff //id for the validation
-63,80d70
+62,79d70
 < void verification_token(uint64_t timestamp, unsigned int vrs, int high_int, int lower_int, int64_t seed, uint64_t IV, uint64_t timestamp2){
 <   printf("Verification Token:\n");
 <   print64(IV);
@@ -35,46 +34,9 @@
 <   return;
 < }
 < 
-867,905c857,867
+866c857,1514
 < int main () {
-<     uint64_t timestamp = (uint64_t) time(NULL);
-<     FILE *fp = fopen("csprng.c","rb"); //Uses SHA256 of this source code for key
-<     char source[MAXBUFLEN + 1];
-<     if (fp != NULL) {
-<         size_t newLen = fread(source, sizeof(char), MAXBUFLEN, fp);
-<         if ( ferror( fp ) != 0 ) {
-<             fputs("Error reading file", stderr);
-<         } else {
-<             source[newLen++] = '\0';
-<         }
-<         fclose(fp);
-<     }
-<     unsigned char *salsaKey;
-<     unsigned char *salsaKey2;   
-<     unsigned i;
-<     unsigned int l = gcry_md_get_algo_dlen(GCRY_MD_SHA256); /* get digest length (used later to print the result) */
-< 
-<     gcry_md_hd_t h;
-<     gcry_md_open(&h, GCRY_MD_SHA256, GCRY_MD_FLAG_SECURE); /* initialise the hash context */
-<     gcry_md_write(h, source, strlen(source)); /* hash some text */
-<     salsaKey = gcry_md_read(h, GCRY_MD_SHA256); /* get the result */
-< 
-<     unsigned char stampString[8];
-<     int64ToChar(stampString, timestamp);
-< 
-<     unsigned char longInput[41];
-<     for (i=0; i < 32; i++){
-<       longInput[i] = salsaKey[i];
-<     }
-<     for (i=0; i < 8; i++){
-<       longInput[32+i] = stampString[i];
-<     }
-<     if (DEBUG){
-<       printf("DEBUG: longInput:");
-<       for (i = 0; i < 40; i++){
-<         printf("%02x", longInput[i]); /* print the result */
-<       }
-<     }
+\ No newline at end of file
 ---
 > // removes one op when compiled with -O3
 > void uint64Convert(uint8_t a[], uint64_t n) {
@@ -87,56 +49,7 @@
 >   a[1] = (n >> 8) & 0xFF;
 >   a[0] = n & 0xFF;
 >   }
-907,954c869,931
-<     gcry_md_hd_t h2;
-<     gcry_md_open(&h2, GCRY_MD_SHA256, GCRY_MD_FLAG_SECURE); /* initialise the hash context */
-<     gcry_md_write(h2, longInput, 40); /* hash some text */
-<     salsaKey2 = gcry_md_read(h2, GCRY_MD_SHA256); /* get the result */
-< 
-<     gcry_error_t     gcryError;
-<     gcry_cipher_hd_t gcryCipherHd;
-<     size_t           index;
-< 
-<     unsigned char iniVector[8];
-<     uint64_t NONCE = rand64();
-<     int seedcounter = 0;
-<     int64ToChar(iniVector, NONCE);
-<     int biome_tolerance = 4000;
-<     char descriptions[5][65] = {"(RSG overworld)", "(Village Only)", "(Shipwreck Only)", "(Jungle Only)", ""};
-<     printf("FSG v1.2.4 %s\n", descriptions[FILTER_TYPE]);
-< 
-<     int filterStyle = FILTER_TYPE;
-<     if (filterStyle == 4){ //Random village or shipwreck (classic)
-<       if (NONCE % 2 == 0){
-<         printf("Village Seed\n");
-<         filterStyle = 1;
-<       } else {
-<         printf("Shipwreck Seed\n");
-<         filterStyle = 2;
-<       }
-<     }
-<     if (filterStyle == 2){
-<       biome_tolerance = 3000;
-<     }
-<     if (filterStyle == 3){ //jungles
-<       biome_tolerance = 2000;
-<     }
-<     //biome_tolerance is tricky, some lower48s will never be satisfiable so we need a steam valve, but too impatient and 
-<     //the heavily biome dependent filters will need to be extra lucky
-<     //determine these through experimentation
-< 
-<     gcryError = gcry_cipher_open(
-<         &gcryCipherHd, // gcry_cipher_hd_t *
-<         GCRY_CIPHER_SALSA20,   // int
-<         GCRY_CIPHER_MODE_STREAM,   // int
-<         0);            // unsigned int
-<     if (gcryError)
-<     {
-<         printf("gcry_cipher_open failed:  %s/%s\n",
-<                gcry_strsource(gcryError),
-<                gcry_strerror(gcryError));
-<         return 1;
----
+> 
 > // for handling the BLAKE3-based CSPRNG
 > struct blake3_param_t {
 > 
@@ -200,16 +113,7 @@
 > 
 >     retVal = *((uint64_t*)(p->cypher + idx)) & 0xffffffffffffL; // resolve it all in one glomp
 >     p->location += 6;
-956,963c933,951
-<     
-<     gcryError = gcry_cipher_setkey(gcryCipherHd, salsaKey2, 32);
-<     if (gcryError)
-<     {
-<         printf("gcry_cipher_setkey failed:  %s/%s\n",
-<                gcry_strsource(gcryError),
-<                gcry_strerror(gcryError));
-<         return 1;
----
+>     }
 > 
 >   // otherwise, we fulfill what we can, update, then fulfill the rest
 >   else {
@@ -229,7 +133,7 @@
 >     retVal |= *((uint64_t*)p->cypher) & mask;
 > 
 >     p->location += rem;
-964a953,1000
+>     }
 > 
 >   return retVal;
 >   }
@@ -278,12 +182,7 @@
 >     if( (checked & BIOME_MASK) == BIOME_MASK ) {
 > 
 >       p.b_checked[p.index] = checked;
-966,969c1002,1033
-<     if (DEBUG){
-<       printf("DEBUG: salsaKey2:");
-<       for (i = 0; i < 32; i++){
-<         printf("%02x", salsaKey2[i]); /* print the result */
----
+>     
 >       // for each thread
 >       for( uint32_t i = 0; i < p.step; i++ ) {
 > 
@@ -316,22 +215,8 @@
 >       p.biomes[p.index] = biome;
 >       p.b_checked[p.index] = checked;
 >       return biome;
-971d1034
-<     }
-973,984c1036,1107
-<     gcryError = gcry_cipher_setiv(gcryCipherHd, iniVector, 8);
-<     if (gcryError)
-<     {
-<         printf("gcry_cipher_setiv failed:  %s/%s\n",
-<                gcry_strsource(gcryError),
-<                gcry_strerror(gcryError));
-<         return 1;
-<     }
-<     if(DEBUG){
-<       printf("DEBUG: iniVector:");
-<       for (i = 0; i < 8; i++){
-<         printf("%02x", iniVector[i]); /* print the result */
----
+>       }
+> 
 >     } // for (each biome seed)
 > 
 >   // otherwise, exit in shame
@@ -404,41 +289,7 @@
 > 
 >       p.structs[p.index] = seed;
 >       p.biomes[p.index] = retVal;
-986,1018c1109,1251
-<     }
-<     
-<     size_t txtLength = 8;
-<     uint64_t seed = 0;
-<     unsigned char * encBuffer = malloc(txtLength+1);
-<     unsigned char * textBuffer = malloc(txtLength+1);
-<     memset(textBuffer, 0, 9);
-<     int ii, ss;
-< 
-<     int has_lower = 0;
-<     uint64_t lower48 = 0;
-<     uint64_t upper16 = 0;
-<     int is_done = 0;
-<     int biome_counter = 0;
-<     initBiomes();
-<     LayerStack g;
-<     int mc = MC_1_16;
-<     setupGenerator(&g, mc);
-<     int ohcrap = 0;
-<     int fortressQuadrant = 0;
-< 
-<     for(ii=0; is_done < 1; ii++){
-<       gcryError = gcry_cipher_encrypt(
-<           gcryCipherHd, // gcry_cipher_hd_t
-<           encBuffer,    // void *
-<           txtLength,    // size_t
-<           textBuffer,    // const void *
-<           txtLength);   // size_t
-<       if (gcryError)
-<       {
-<           printf("gcry_cipher_decrypt failed:  %s/%s\n",
-<                 gcry_strsource(gcryError),
-<                 gcry_strerror(gcryError));
----
+>       }
 > 
 >     // we were told to exit?
 >     if( retVal <= 0x10000 )
@@ -582,56 +433,8 @@
 >           for( uint i = 0; i < 4; i++ )
 >             printf( "\t%d = %s\n", i, descriptions[i] );
 > 
-1020,1035d1252
-<       }
-<       seedcounter++;
-<       seed = charTo64bitNum(encBuffer);
-<       int result = 0;
-<       if (has_lower < 1){
-<         lower48 = seed >> 16;
-<         //lower48 = -7385161545945413464LL & 0xFFFFFFFFFFFF;
-<         result = valid_structures_and_types(lower48, &fortressQuadrant, filterStyle);
-<         if (result > 0){ // && bastionbiome(lower48) == 1){
-<           //bastion biomes are minorly affected by top 16 but are medium cost:
-<           has_lower = seedcounter;
-<           ohcrap = 0;
-<         } else {
-<           if ((seedcounter - biome_counter) % 1000000 == 0){
-<             printf(",");
-<             fflush(stdout);
-1037,1067c1254,1275
-<           //Could analyze the statistical cost of each filter here as they each give a different negative number
-<           has_lower = 0;
-<         }
-<       } else {
-<         upper16 = seed >> 48;
-<         //upper16 = -7385161545945413464LL >> 48;
-<         seed = lower48 | (upper16 << 48);
-< //        seed = 7086636929918596711LL;
-<         biome_counter += 1;
-<         if (biome_counter % 100 == 0){
-<           printf(".");
-<           fflush(stdout);          
-<         }
-<         if (bastionbiome(seed) == 0){
-<           has_lower = 0;
-<         } else {
-<           result = valid_biomes(seed, &fortressQuadrant, filterStyle, &g);
-<           if (result > 0){
-<             printf("\nSeed: %ld\n", seed);
-<             printf("Filtered %d seeds did %d biome checks\n", seedcounter, biome_counter);
-<             uint64_t timestamp2 = (uint64_t) time(NULL);
-<             verification_token(timestamp, VERSION, seedcounter, has_lower, seed, NONCE, timestamp2);
-<             is_done = 1;
-<           } else { //could analyze relative cost of each filter
-<             ohcrap += 1;
-<             is_done = 0;
-<             if (ohcrap >= biome_tolerance){
-<               has_lower = 0;
-<               ohcrap = 0;
-<               printf("@");
-<               fflush(stdout);
----
+>           return 1;
+>           }
 > 
 >         break;
 > 
@@ -654,9 +457,9 @@
 >             printf( "ERROR: The FSG version used to generate this token, %d, cannot be checked with this program (which is version %d).\n",
 >               verify->version, VERSION );
 >             return 1;
-1068a1277
+>             }
 >           filterStyle   = verify->filterStyle;
-1069a1279,1427
+>           }
 >         
 >         break;
 > 
@@ -806,7 +609,7 @@
 >         else
 >           printf("BAD: The number of biome seeds checked does NOT match.\n");
 >             
-1070a1429,1464
+>         }
 >       else {
 > 
 >         printf("\nSeed: %ld\n", seed);
@@ -843,11 +646,7 @@
 >         free( params[i].rng.key );
 > 
 >       return 0;
-1072,1074c1466,1514
-<     }
-<     return 0;
-< }
----
+>       }
 > 
 >     // otherwise, check if it's time for a status display
 >     struct timespec now;
