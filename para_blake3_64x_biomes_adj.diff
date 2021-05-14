@@ -338,7 +338,7 @@
 >     return;
 > 
 >   printf("Verification Token:\n");
->   printf("%02X%02X-%016lx-%016lX-%lx-%x-%lX\n", token->version, token->filterStyle, token->nonce, 
+>   printf("%02X%02X-%016lx-%016lX-%lx-%lx-%lX\n", (int)token->version, (int)token->filterStyle, token->nonce, 
 >     token->seed, token->structs + token->biomes, token->biomes, token->timestamp);
 > 
 >   }
