@@ -52,7 +52,7 @@ fi
 if [ -s libs/libblake3.so ] && [ -s include/blake3.h ] && [ -f .PATCHED ] ; then 
 
 	echo Compiling the patched code...
-	if gcc csprng.c -I./include -L./libs -O3 -mtune=native -lblake3 -L. \
+	if gcc csprng.c -I./include -L./libs -O3 -lblake3 -L. \
 		-lcubiomes -lm -pthread -Wl,-rpath=./libs/ -lminecraft_nether_gen_rs \
 		-o seed ; then
 

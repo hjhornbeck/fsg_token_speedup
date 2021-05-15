@@ -33,7 +33,7 @@ fi
 if [ -f .PATCHED ] ; then 
 
 	echo Compiling the patched code...
-	if gcc linear.c -I./include -L./libs -O3 -mtune=native -L. \
+	if gcc linear.c -I./include -L./libs -O3 -L. \
 		-lcubiomes -lm -pthread -Wl,-rpath=./libs/ -lminecraft_nether_gen_rs \
 		-o seed ; then
 
