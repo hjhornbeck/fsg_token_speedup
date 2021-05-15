@@ -24,8 +24,8 @@ for line in sys.stdin:
         db[version][filterS] = [0.5, 0, 0.5]
 
     db[version][filterS][0] += 1   # alpha for both conjugate priors
-    db[version][filterS][1] += (((biomes - 1)  % 65536) + 1) # beta, finding biome
-    db[version][filterS][2] +=  ((biomes - 1) // 65536)     # beta, biome possible
+    db[version][filterS][1] += ((biomes - 1)  % 65536) + 1 # beta, finding biome
+    db[version][filterS][2] += max((biomes-1) // 65536, 0) # beta, biome possible
 
     # print out the updated estimate for this version
     print( f"uint32_t biome_cutoffs[{len(db[version])+1}] = " + "{", end='' )
@@ -40,4 +40,5 @@ for line in sys.stdin:
             cutoff = 65536
         print( f"{cutoff}, ", end='' )
 
-    print( "0 };\t// " + f"VERSION == {version}", flush=True )
+    print( "0};\t// " + f"VERSION == {version}", flush=True )
+#    print( f"// DEBUG: ({version},{key}) = {db[version][key]}" )
